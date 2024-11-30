@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for AI Photo Search.
+
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: frontend-bucket-b1
+      WebsiteConfiguration:
+        IndexDocument: index.html
+      AccessControl: PublicRead
+    DeletionPolicy: Retain
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::frontend-bucket-b1/*"
+    DeletionPolicy: Retain
+
+  StorageBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: photo-storage-b2-new
+    DeletionPolicy: Retain
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaBasicExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - es:ESHttpPost
+                  - es:ESHttpGet
+                  - es:ESHttpPut
+                Resource: "arn:aws:es:us-east-1:123456789012:domain/photos/*" # Replace with your OpenSearch ARN
+    DeletionPolicy: Retain
+
+  IndexPhotosLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: index-photos
+      Runtime: python3.9
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: index.handler
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import datetime
+          from opensearchpy import OpenSearch
+
+          rekognition_client = boto3.client('rekognition')
+          s3_client = boto3.client('s3')
+
+          opensearch_client = OpenSearch(
+              hosts=[{'host': 'search-photos-kbihlhs7ixlzuve77np5oqqzam.aos.us-east-1.on.aws', 'port': 443}],
+              http_auth=('master', 'Mimo@148'),  
+              use_ssl=True,
+              verify_certs=True
+          )
+
+          def lambda_handler(event, context):
+              try:
+                  print("Incoming Event:", json.dumps(event, indent=2))
+                  record = event['Records'][0]
+                  bucket = record['s3']['bucket']['name']
+                  object_key = record['s3']['object']['key']
+                  print(f"Processing file: {object_key} from bucket: {bucket}")
+
+                  rekognition_response = rekognition_client.detect_labels(
+                      Image={'S3Object': {'Bucket': bucket, 'Name': object_key}},
+                      MaxLabels=10
+                  )
+                  labels = [label['Name'] for label in rekognition_response['Labels']]
+                  print(labels)
+
+                  document = {
+                      "objectKey": object_key,
+                      "bucket": bucket,
+                      "createdTimestamp": datetime.datetime.now().isoformat(),
+                      "labels": labels
+                  }
+
+                  opensearch_response = opensearch_client.index(
+                      index="photos",
+                      body=document,
+                      id=object_key
+                  )
+                  print("Document indexed:", opensearch_response)
+                  return {"statusCode": 200, "body": json.dumps("Photo indexed successfully!")}
+              except Exception as e:
+                  print("Error:", str(e))
+                  return {"statusCode": 500, "body": json.dumps("An error occurred during processing.")}
+    DeletionPolicy: Retain
+
+  SearchPhotosLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: search-photos
+      Runtime: python3.9
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: index.handler
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          from opensearchpy import OpenSearch
+
+          lex_client = boto3.client('lexv2-runtime')
+
+          opensearch_client = OpenSearch(
+              hosts=[{'host': 'search-photos-kbihlhs7ixlzuve77np5oqqzam.aos.us-east-1.on.aws', 'port': 443}],
+              http_auth=('master', 'Mimo@148'),  
+              use_ssl=True,
+              verify_certs=True
+          )
+
+          def lambda_handler(event, context):
+              print("Received Event:", json.dumps(event, indent=2))
+              query = event.get('q')
+              print(f"Received Query: {query}")
+              
+              bot_id = "YLRLMWGWT9"
+              bot_alias_id = "TSTALIASID"
+              locale_id = "en_US"
+              session_id = "test-session"
+
+              response = lex_client.recognize_text(
+                  botId=bot_id,
+                  botAliasId=bot_alias_id,
+                  localeId=locale_id,
+                  sessionId=session_id,
+                  text=query
+              )
+              print(f"Lex Response: {json.dumps(response, indent=2)}")
+
+              slots = response.get('sessionState', {}).get('intent', {}).get('slots', {})
+
+              keyword1 = slots.get('keyword1', {}).get('value', {}).get('interpretedValue', None)
+              keyword2 = slots.get('keyword2', {}).get('value', {}).get('interpretedValue', None)
+
+              search_terms = []
+              if keyword1:
+                  search_terms.append(keyword1.title())
+              if keyword2:
+                  search_terms.append(keyword2.title())
+
+              os_query = {
+                  "query": {
+                      "bool": {
+                          "should": [
+                              {"match": {"labels": term}} for term in search_terms
+                          ],
+                          "minimum_should_match": 1
+                      }
+                  }
+              }
+
+              try:
+                  search_results = opensearch_client.search(index="photos", body=os_query)
+                  hits = search_results['hits']['hits']
+                  results = [{"id": hit["_id"], "source": hit["_source"]} for hit in hits]
+              except Exception as e:
+                  print(f"OpenSearch Search Error: {e}")
+                  results = []
+
+              print(f"Search Results: {json.dumps(results, indent=2)}")
+              return {
+                  "statusCode": 200,
+                  "body": json.dumps({"message": f"Search results for: {', '.join(search_terms)}", "results": results})
+              }
+    DeletionPolicy: Retain
+

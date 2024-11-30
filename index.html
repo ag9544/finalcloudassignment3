@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Smart Photo Album</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/shoelace-css/1.0.0-beta16/shoelace.css">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.4.0/axios.min.js"></script>
+    <script src="lib/apiGatewayCore/sigV4Client.js"></script>
+    <script src="lib/apiGatewayCore/apiGatewayClient.js"></script>
+    <script src="lib/apiGatewayCore/simpleHttpClient.js"></script>
+    <script src="lib/apiGatewayCore/utils.js"></script>
+    <script type="text/javascript" src="lib/url-template/url-template.js"></script>
+    <script src="apigClient.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1 style="text-align: center;">Smart Photo Album</h1>
+        </header>
+
+        <!-- Search Section -->
+        <section>
+            <h3 style="margin-top: 20px; text-align: center;">Search for Photos</h3>
+            <div class="input-group">
+                <input id="search-query" type="text" class="form-control" placeholder="Enter keywords to search">
+                <div class="input-group-btn">
+                    <button class="btn btn-primary" id="search-button">
+                        <i class="fa fa-search"></i> Search
+                    </button>
+                </div>
+            </div>
+            <div id="search-results" class="results-container"></div>
+        </section>
+
+        <!-- Upload Section -->
+        <section style="margin-top: 50px;">
+            <h3 style="text-align: center;">Upload a New Photo</h3>
+            <form id="upload-form">
+                <div class="input-group" style="margin-top: 20px;">
+                    <input type="file" id="photo" class="form-control">
+                    <div class="input-group-btn">
+                        <button type="submit" class="btn btn-primary">Upload</button>
+                    </div>
+                </div>
+                <input type="text" id="custom-labels" class="form-control" placeholder="Add custom tags for the photo" style="margin-top: 10px;">
+            </form>
+            <p id="upload-status"></p>
+        </section>
+
+        <!-- Results Container -->
+        <section id="results-section" style="margin-top: 50px;">
+            <div id="img-container" class="image-gallery"></div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
